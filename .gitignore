@@ -2,4 +2,4 @@
 src/predictor
 CMakeLists.txt
 cmake-build-debug/
-idea/
+.idea/
