@@ -1,2 +1,5 @@
 *.o
 src/predictor
+CMakeLists.txt
+cmake-build-debug/
+
