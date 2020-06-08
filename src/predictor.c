@@ -38,8 +38,24 @@ int verbose;
 //
 //TODO: Add your own Branch Predictor data structures here
 //
-uint32_t ghistory;
-uint8_t *bht;
+
+//for gshare and tournament
+uint32_t ghistory; // used to record global history
+uint32_t gh_mask;    // used as global history mask;
+
+//for gshare
+uint8_t *bht;      // used as Branch History Table
+
+//for tournament
+uint32_t *lht;     // used as Local History Table
+uint8_t *lCounter; // used as Local Counter
+uint8_t *gCounter; // used as Global Counter
+uint32_t selector; // used as prediction selector
+uint8_t lprediction; //used to record local prediction
+uint8_t gprediction; //used to record global prediction
+
+uint32_t pc_mask;
+uint32_t lh_mask;
 
 //------------------------------------//
 //        Predictor Functions         //
@@ -47,11 +63,48 @@ uint8_t *bht;
 
 // Initialize the predictor
 //
+uint32_t cal_mask(int bits) {
+    uint32_t mask = 0;
+    for (int i = 0; i < bits; ++i) {
+        mask = mask + (int) pow(2, i);
+    }
+    return mask;
+}
+
 void init_Gshare() {
     ghistory = 0;
-    size_t bht_size = 1 << ghistoryBits;
+    size_t
+            bht_size = 1 << ghistoryBits;
     bht = (uint8_t *) malloc(bht_size * sizeof(uint8_t));
     memset(bht, WN, bht_size * sizeof(uint8_t));
+
+    gh_mask = cal_mask(ghistoryBits);
+}
+
+void init_Tournament() {
+    ghistory = 0;
+    size_t
+            lht_size = 1 << pcIndexBits;
+    lht = (uint32_t *) malloc(lht_size * sizeof(uint32_t));
+    memset(lht, 0, lht_size * sizeof(uint32_t));
+
+    size_t
+            lCounter_size = 1 << lhistoryBits;
+    lCounter = (uint8_t *) malloc(lCounter_size * sizeof(uint8_t));
+    memset(lCounter, WN, lCounter_size * sizeof(uint8_t));
+
+    size_t
+            gCounter_size = 1 << ghistoryBits;
+    gCounter = (uint8_t *) malloc(gCounter_size * sizeof(uint8_t));
+    memset(gCounter, WN, gCounter_size * sizeof(uint8_t));
+
+    selector = 0;
+    lprediction = NOTTAKEN;
+    gprediction = NOTTAKEN;
+
+    pc_mask = cal_mask(pcIndexBits);
+    lh_mask = cal_mask(lhistoryBits);
+    gh_mask = cal_mask(ghistoryBits);
 }
 
 void
@@ -63,6 +116,9 @@ init_predictor() {
         case GSHARE:
             init_Gshare();
             break;
+        case TOURNAMENT:
+            init_Tournament();
+            break;
         default:
             break;
     }
@@ -73,23 +129,37 @@ init_predictor() {
 // indicates a prediction of not taken
 //
 
-uint32_t cal_mask(int bits) {
-    uint32_t mask = 0;
-    for (int i = 0; i < bits; ++i) {
-        mask = mask + (int)pow(2, i);
-    }
-    return mask;
-}
+
 
 uint8_t gshare_predict(uint32_t pc) {
-    uint32_t mask = cal_mask(ghistoryBits);
-    printf("%d", mask);
-    int index = (pc ^ ghistory) & mask;
+    int index = (pc ^ ghistory) & gh_mask;
     uint8_t prediction = NOTTAKEN;
     if (bht[index] == WT || bht[index] == ST) {
         prediction = TAKEN;
     }
     return prediction;
+}
+
+uint8_t tournament_predict(uint32_t pc) {
+    uint32_t lht_index = pc & pc_mask;
+    uint32_t lhistory = lht[lht_index];
+    lprediction = NOTTAKEN;
+    if (lCounter[lhistory] == WT || lCounter[lhistory] == ST) {
+        lprediction = TAKEN;
+    }
+
+    gprediction = NOTTAKEN;
+    if (gCounter[ghistory] == WT || gCounter[ghistory] == ST) {
+        gprediction = TAKEN;
+    }
+
+    if (selector == 0 || selector == 1) {
+        return gprediction;
+    } else if (selector == 2 || selector == 3) {
+        return lprediction;
+    } else {
+        exit(1);
+    }
 }
 
 uint8_t
@@ -105,6 +175,7 @@ make_prediction(uint32_t pc) {
         case GSHARE:
             return gshare_predict(pc);
         case TOURNAMENT:
+            return tournament_predict(pc);
         case CUSTOM:
         default:
             break;
@@ -122,10 +193,9 @@ make_prediction(uint32_t pc) {
 //
 
 void train_gshare(uint32_t pc, uint8_t outcome) {
-    uint32_t mask = cal_mask(ghistoryBits);
 
     //update bht
-    int index = (pc ^ ghistory) & mask;
+    int index = (pc ^ ghistory) & gh_mask;
     if (outcome == TAKEN) {
         if (bht[index] != ST) {
             bht[index] = bht[index] + 1;
@@ -137,7 +207,47 @@ void train_gshare(uint32_t pc, uint8_t outcome) {
     }
 
     // update global history register
-    ghistory = ((ghistory << 1) | outcome) & mask;
+    ghistory = ((ghistory << 1) | outcome) & gh_mask;
+}
+
+void train_tournament(uint32_t pc, uint8_t outcome) {
+    //update selector
+    if (outcome == lprediction && outcome != gprediction && selector < 3) {
+        selector = selector + 1;
+    } else if (outcome != lprediction && outcome == gprediction && selector > 0) {
+        selector = selector - 1;
+    }
+
+    //update lCounter
+    uint32_t lht_index = pc & pc_mask;
+    uint32_t lhistory = lht[lht_index];
+    if (outcome == TAKEN) {
+        if (lCounter[lhistory] != ST) {
+            lCounter[lhistory] = lCounter[lhistory] + 1;
+        }
+    } else {
+        if (lCounter[lhistory] != SN) {
+            lCounter[lhistory] = lCounter[lhistory] - 1;
+        }
+    }
+
+    //update gCounter
+    if (outcome == TAKEN) {
+        if (gCounter[ghistory] != ST) {
+            gCounter[ghistory] = gCounter[ghistory] + 1;
+        }
+    } else {
+        if (gCounter[ghistory] != SN) {
+            gCounter[ghistory] = gCounter[ghistory] - 1;
+        }
+    }
+
+    //update local history
+    lhistory = ((lhistory << 1) | outcome) & lh_mask;
+    lht[lht_index] = lhistory;
+
+    //update global history
+    ghistory = ((ghistory << 1) | outcome) & gh_mask;
 }
 
 void
@@ -148,6 +258,9 @@ train_predictor(uint32_t pc, uint8_t outcome) {
     switch (bpType) {
         case GSHARE:
             train_gshare(pc, outcome);
+            break;
+        case TOURNAMENT:
+            train_tournament(pc, outcome);
             break;
         default:
             break;
