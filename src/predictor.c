@@ -50,7 +50,7 @@ uint8_t *bht;      // used as Branch History Table
 uint32_t *lht;     // used as Local History Table
 uint8_t *lCounter; // used as Local Counter
 uint8_t *gCounter; // used as Global Counter
-uint32_t selector; // used as prediction selector
+uint8_t *selector; // used as prediction selector
 uint8_t lprediction; //used to record local prediction
 uint8_t gprediction; //used to record global prediction
 
@@ -98,7 +98,9 @@ void init_Tournament() {
     gCounter = (uint8_t *) malloc(gCounter_size * sizeof(uint8_t));
     memset(gCounter, WN, gCounter_size * sizeof(uint8_t));
 
-    selector = 0;
+    selector = (uint8_t *) malloc(gCounter_size * sizeof(uint8_t));
+    memset(selector, 0, gCounter_size * sizeof(uint8_t));
+
     lprediction = NOTTAKEN;
     gprediction = NOTTAKEN;
 
@@ -153,9 +155,10 @@ uint8_t tournament_predict(uint32_t pc) {
         gprediction = TAKEN;
     }
 
-    if (selector == 0 || selector == 1) {
+    uint8_t select = selector[ghistory];
+    if (select == 0 || select == 1) {
         return gprediction;
-    } else if (selector == 2 || selector == 3) {
+    } else if (select == 2 || select == 3) {
         return lprediction;
     } else {
         exit(1);
@@ -212,10 +215,11 @@ void train_gshare(uint32_t pc, uint8_t outcome) {
 
 void train_tournament(uint32_t pc, uint8_t outcome) {
     //update selector
-    if (outcome == lprediction && outcome != gprediction && selector < 3) {
-        selector = selector + 1;
-    } else if (outcome != lprediction && outcome == gprediction && selector > 0) {
-        selector = selector - 1;
+    uint8_t select = selector[ghistory];
+    if (outcome == lprediction && outcome != gprediction && select < 3) {
+        selector[ghistory] = select + 1;
+    } else if (outcome != lprediction && outcome == gprediction && select > 0) {
+        selector[ghistory] = select - 1;
     }
 
     //update lCounter
